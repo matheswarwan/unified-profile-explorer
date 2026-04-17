@@ -1,7 +1,9 @@
 import 'dotenv/config';
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import { initSocket } from './lib/socket';
 
 import { runMigrations } from './db/migrate';
 import authRouter from './routes/auth';
@@ -70,7 +72,9 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
 async function start(): Promise<void> {
   try {
     await runMigrations();
-    app.listen(PORT, () => {
+    const httpServer = http.createServer(app);
+    initSocket(httpServer);
+    httpServer.listen(PORT, () => {
       console.log(`[server] Unified Profile Explorer API running on port ${PORT}`);
     });
   } catch (err) {

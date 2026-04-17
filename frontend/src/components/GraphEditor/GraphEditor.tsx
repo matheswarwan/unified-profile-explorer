@@ -20,12 +20,16 @@ import 'reactflow/dist/style.css';
 
 import { schemaApi, annotationsApi, Annotation, GraphLayout, ReactFlowNode, ReactFlowEdge, GraphNodeData } from '@/lib/api';
 import { showToast } from '@/app/layout';
+import { joinOrgRoom, leaveOrgRoom, onAnnotationEvent } from '@/lib/socket';
+import { useAuth } from '@/lib/auth';
 import DmoNode from './DmoNode';
+import ClusterNode from './ClusterNode';
 import AnnotationForm from './AnnotationForm';
 import NodeDetailPanel from './NodeDetailPanel';
-import { RefreshCw, Search, Eye, EyeOff, Download } from 'lucide-react';
+import { buildClusteredLayout, ClusterCategory } from './clusterUtils';
+import { RefreshCw, Search, Eye, EyeOff, Download, Layers } from 'lucide-react';
 
-const NODE_TYPES = { dmoNode: DmoNode };
+const NODE_TYPES = { dmoNode: DmoNode, clusterNode: ClusterNode };
 
 interface GraphEditorInnerProps {
   orgId: string;
@@ -44,6 +48,9 @@ function GraphEditorInner({ orgId }: GraphEditorInnerProps) {
   const [filterText, setFilterText] = useState('');
   const [reachableOnly, setReachableOnly] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [clusterMode, setClusterMode] = useState(false);
+  const [collapsedClusters, setCollapsedClusters] = useState<Set<ClusterCategory>>(new Set());
+  const { token } = useAuth();
 
   const { fitView } = useReactFlow();
 
@@ -78,6 +85,25 @@ function GraphEditorInner({ orgId }: GraphEditorInnerProps) {
   useEffect(() => {
     loadGraph();
   }, [loadGraph]);
+
+  // Real-time annotation sync via WebSocket
+  useEffect(() => {
+    if (!token) return;
+    const s = joinOrgRoom(token, orgId);
+    const unsub = onAnnotationEvent(s, (event) => {
+      if (event.type === 'annotation:created' || event.type === 'annotation:updated') {
+        showToast(`Annotation ${event.type === 'annotation:created' ? 'added' : 'updated'} by another user`, 'info');
+        void loadGraph();
+      } else if (event.type === 'annotation:deleted') {
+        showToast('An annotation was deleted by another user', 'info');
+        void loadGraph();
+      }
+    });
+    return () => {
+      unsub();
+      leaveOrgRoom(orgId);
+    };
+  }, [token, orgId, loadGraph]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -162,20 +188,44 @@ function GraphEditorInner({ orgId }: GraphEditorInnerProps) {
     }
   }, [nodes, edges, orgId]);
 
-  const filteredNodes = useMemo(() => {
-    return nodes.map((n) => {
+  const toggleCluster = useCallback((category: ClusterCategory) => {
+    setCollapsedClusters((prev) => {
+      const next = new Set(prev);
+      if (next.has(category)) next.delete(category);
+      else next.add(category);
+      return next;
+    });
+  }, []);
+
+  const { filteredNodes, filteredEdges } = useMemo(() => {
+    // Base filter: text + reachable-only
+    const baseNodes = nodes.map((n) => {
       const data = n.data as GraphNodeData;
       const nameMatch =
         !filterText ||
         data.label.toLowerCase().includes(filterText.toLowerCase()) ||
         data.apiName.toLowerCase().includes(filterText.toLowerCase());
       const reachableMatch = !reachableOnly || data.status === 'reachable';
-      return {
-        ...n,
-        hidden: !nameMatch || !reachableMatch,
-      };
+      return { ...n, hidden: !nameMatch || !reachableMatch };
     });
-  }, [nodes, filterText, reachableOnly]);
+
+    const visibleNodes = baseNodes.filter((n) => !n.hidden);
+
+    if (!clusterMode || visibleNodes.length < 8) {
+      return { filteredNodes: baseNodes, filteredEdges: edges };
+    }
+
+    // Build clustered layout — inject toggle callback into cluster node data
+    const clustered = buildClusteredLayout(visibleNodes, edges, collapsedClusters);
+    const clusteredWithToggle = clustered.nodes.map((n) => {
+      if (n.type === 'clusterNode') {
+        return { ...n, data: { ...n.data, onToggle: toggleCluster } };
+      }
+      return n;
+    });
+
+    return { filteredNodes: clusteredWithToggle as typeof baseNodes, filteredEdges: clustered.edges };
+  }, [nodes, edges, filterText, reachableOnly, clusterMode, collapsedClusters, toggleCluster]);
 
   if (loading) {
     return (
@@ -241,6 +291,18 @@ function GraphEditorInner({ orgId }: GraphEditorInnerProps) {
         </button>
 
         <button
+          onClick={() => setClusterMode((c) => !c)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border transition-colors ${
+            clusterMode
+              ? 'bg-indigo-600 border-indigo-500 text-white'
+              : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
+          }`}
+        >
+          <Layers className="w-3.5 h-3.5" />
+          {clusterMode ? 'Clustered' : 'Cluster'}
+        </button>
+
+        <button
           onClick={handleSaveLayout}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-gray-900 border border-gray-700 text-gray-400 hover:border-gray-600"
         >
@@ -267,7 +329,7 @@ function GraphEditorInner({ orgId }: GraphEditorInnerProps) {
 
       <ReactFlow
         nodes={filteredNodes}
-        edges={edges}
+        edges={filteredEdges}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={handleConnect}

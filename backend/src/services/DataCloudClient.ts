@@ -11,10 +11,9 @@ import {
   IndividualCandidate,
 } from '../types';
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';
-
 function decryptCredentials(encrypted: string): DataCloudCredentials {
-  const bytes = CryptoJS.AES.decrypt(encrypted, ENCRYPTION_KEY);
+  const key = process.env.ENCRYPTION_KEY || '';
+  const bytes = CryptoJS.AES.decrypt(encrypted, key);
   const decrypted = bytes.toString(CryptoJS.enc.Utf8);
   return JSON.parse(decrypted) as DataCloudCredentials;
 }

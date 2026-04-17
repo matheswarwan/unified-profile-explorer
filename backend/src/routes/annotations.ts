@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { requireAuth } from '../middleware/auth';
 import { AnnotationStore } from '../services/AnnotationStore';
+import { broadcastAnnotationEvent } from '../lib/socket';
 import { CreateAnnotationRequest, UpdateAnnotationRequest } from '../types';
 
 const router = Router();
@@ -39,6 +40,7 @@ router.post(
 
     try {
       const annotation = await store.create(req.body, req.user!.id);
+      broadcastAnnotationEvent(annotation.org_id, { type: 'annotation:created', annotation });
       res.status(201).json(annotation);
     } catch (err) {
       console.error('[annotations] Create error:', err);
@@ -64,6 +66,7 @@ router.put(
 
     try {
       const annotation = await store.update(req.params.id, req.body, req.user!.id);
+      broadcastAnnotationEvent(annotation.org_id, { type: 'annotation:updated', annotation });
       res.json(annotation);
     } catch (err) {
       console.error('[annotations] Update error:', err);
@@ -80,7 +83,14 @@ router.put(
 // DELETE /api/annotations/:id
 router.delete('/:id', async (req: Request, res: Response): Promise<void> => {
   try {
+    const existing = await store.getById(req.params.id);
+    if (!existing) { res.status(404).json({ error: 'Annotation not found' }); return; }
     await store.delete(req.params.id, req.user!.id);
+    broadcastAnnotationEvent(existing.org_id, {
+      type: 'annotation:deleted',
+      annotationId: req.params.id,
+      orgId: existing.org_id,
+    });
     res.json({ message: 'Annotation deleted' });
   } catch (err) {
     console.error('[annotations] Delete error:', err);

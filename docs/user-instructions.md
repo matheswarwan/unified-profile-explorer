@@ -1,3 +1,16 @@
+# Mathes notes 
+
+cd "/Users/matheswarankanagarajan/Desktop/SideQuest/Unified Profile Explorer"
+                                                                                                                          
+  # Start backend
+  cd backend && npx ts-node src/index.ts &                                                                                
+                                                                                                                          
+  # Start frontend (new terminal tab)
+  cd frontend && npx next dev &                                                                                           
+                                                                     
+  Or just run from root:                                                                                                  
+  npm run dev
+
 # User Instructions — Unified Profile Explorer
 
 ## Getting Started
